@@ -1,0 +1,61 @@
+代码来源 每天5分钟玩转docker 
+为了省时间 主要是重装系统非常恶心
+安装过程找相关pdf 现阶段还是有点恶心 尤其是网络
+主要记录常用的命令 很多pdf都过期了 
+docker run -d -p 80:80 httpd
+	没有下载镜像会自动下载 下载过就要手动检查版本号 docker images
+	httpd:2.4 记得查看images的版本号 有些必须手动指定 
+	docker ps 检查是否开启 如果失败 停止或删除继续
+	docker stop 自定义id或默认id
+	docker rm xxx
+	浏览器输入http:localhost 成功
+	终端curl 127.0.0.1 成功 同理输入相关端口号
+	这是一个http的web服务器 比如屌炸天的nginx 作用是网络交警
+	-p是端口 80:80是容器映射到host 意思是先访问host再访问容器 原因安全或网速
+	妖蛾子不少 但其实就那么点东西
+	直接输入docker有命令大全
+systemctl start docker.service
+	restart mask unmask stop disable enable
+service docker status
+docker daemon
+	运行在docker host上什么都是它干
+	默认响应本地host的请求比如localhost 127.0.0.1
+	可以在环境变量的execstart后面添加-H tcp://0.0.0.0 表示允许任意ip 最好不要
+	如果在麦当劳蹭wifi或者其他妖蛾子网络 需要查看当前的系统网络ip然后配置一下 不然很多问题
+	/etc/systemd/system/multi-user.target.wants/docker.service
+	docker有各种妖蛾子版本 具体变量配置文件不一样
+	systemctl daemon-reload 
+	systemctl restart docker.service 配置完还要重载跟重启 就是这么妖蛾子
+	比如isp大佬给了你一个ip 192.168.56.102 给docker配置监听这个ip
+	然后docker -H 192.168.56.102 info 就可以得到docker的服务器信息 
+	如果没有在变量里面配置这个ip就会显示无法连接到docker-daemon 所以docker就是个服务器 玩的就是ip
+	在配置过程中输入错误 改动了默认行 或者docker自身问题有多个配置冲突 貌似会递归拷问自身然后崩溃
+	/etc/docker/daemon.json 这个时候的配置好像就丢失了 有点诡异
+	{"storage-driver": "overlay2", "storage-opts": ["overlay2.override_kernel_check=true"]}
+	添加上面这行之后重载重启又正常了 似乎是从拷问自身中回过神来 这就是传说中的YP哲学吗?
+待续
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
