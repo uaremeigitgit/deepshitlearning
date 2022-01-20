@@ -1,0 +1,43 @@
+创建github账号
+生成钥匙
+	ssh-keygen -t rsa -C "xxx@xxx.com"
+	回车或密码
+	如果提示已经存在可以删干净或继续用
+	cd 到ssh文件夹 rm删干净或看看能否继续用
+	生成成功后在github的个人设置里面添加ssh钥匙 
+	cat ~/.ssh/id_rsa.pub 出来的整个内容就是钥匙 复制过去
+	ssh -T git@github.com 提示成功
+创建仓库 其实就是个文件夹
+拉取仓库
+	cd一个文件夹 在这里拉取上传
+	git clone xxx@xxxxxx.git 就在绿色提示的code位置点击进去复制 连接失败就多来几次 
+	git status 显示工作区干净 没有东西要提交 其实就是个文件夹 所谓的工作区
+仓库搞事情
+	git add filename
+	git commit -m "墓志铭"
+	git log 显示你干什么了
+仓库出货
+	git push
+	输入相关账号密码 2021年出了新玩法 密码认证有时限 估计是linux的大仓库太多垃圾 搞事情了
+仓库规范化
+	git init 生成.git目录记录相关工作记录
+	git status 
+	git log --pretty=short
+	git log filename
+待续 以后用到再补充
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
