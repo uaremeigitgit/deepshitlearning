@@ -1,0 +1,61 @@
+redis实战 作者carlson JL
+
+redislab/redis-py
+docker run -ti --name xx xxx 
+docker exec xxxxxxxxx bash
+
+string
+redis-cli
+get hello world
+get hello
+del hello
+get hello
+
+linked-list
+rpush list-key item
+rpush list-key item2
+rpush list-key item
+lrange list-key 0 -1
+lindex list-key 1
+lpop list-key  弹出就不见了
+lrange list-key 0 -1
+
+set
+sadd set-key item
+sadd set-key item2
+sadd set-key item3
+sadd set-key item 添加失败 集合自动去重
+smembers set-key 
+sismember set-key item4 判断元素是否存在
+sismember set-key item
+srem set-key item2 删除元素
+srem set-key item2 空集无法删除 
+
+hash 
+hset hash-key sub-key1 value1 
+hset hash-key sub-key2 value2
+hset hash-key sub-key1 value1 添加失败 集合自动去重 但似乎有bug 换了其他值也自动去重
+hgetall hash-key 哈希集合 结构是主键 副键 值
+hdel hash-key sub-key2
+hdel hash-key sub-key2 空集无法删除
+hget hash-key sub-key1
+hgetall hash-key
+
+orderset
+zadd zset-key 728 member1 这是键值对
+zadd zset-key 982 member0
+zadd zset-key 982 member0 集合自动去重
+zrange zset-key 0 -1 withscores 索引排序
+zrangebyscore zset-key 0 800 withscores 分数排序
+zrem zset-key member1 
+zrem zset-key member1 空集无法删除
+zrange zset-key 0 -1 withscores
+
+
+
+
+
+
+
+
+
