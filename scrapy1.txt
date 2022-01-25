@@ -1,0 +1,9 @@
+精通python爬虫框架scrapy 作者dimitrios kouzis-loukas
+
+lynx纯文本浏览器
+vagrant 
+twisted 
+node.js
+第三章
+第五章
+第八章
