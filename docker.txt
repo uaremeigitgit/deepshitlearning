@@ -1110,7 +1110,7 @@ docker存储
 			创建一个网络部署一个容器web1
 			然后定制规则允许calnet2的容器访问刚部署的web1的80端口
 			docker network create --driver calico --ipam-dirver calico-ipam calweb			
-				集群共享的 随笔找个host
+				集群共享的 随便找个host
 			进入host1
 				docker container run --net calweb2 --name web1 -d httpd
 				docker container exec web1 ip address show cali0
