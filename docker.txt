@@ -32,30 +32,1368 @@ docker daemon
 	在配置过程中输入错误 改动了默认行 或者docker自身问题有多个配置冲突 貌似会递归拷问自身然后崩溃
 	/etc/docker/daemon.json 这个时候的配置好像就丢失了 有点诡异
 	{"storage-driver": "overlay2", "storage-opts": ["overlay2.override_kernel_check=true"]}
-	添加上面这行之后重载重启又正常了 似乎是从拷问自身中回过神来 这就是传说中的YP哲学吗?
-待续
+	添加上面这行之后重载重启又正常了
+dockerfile
+	构建docker镜像的命令用来diy自己的软件以及各种工作栈 可以打包成镜像需要的时候直接一个pull
+	FROM scratch 从0开始
+	COPY hello / 将当前目录里面的文件hello复制到镜像的根目录 
+	CMD ["/hello"] 容器启动的时候 执行/hello这个命令 会看到一句话提示运行正常
+
+	FROM scratch
+	ADD centos-7-docker.tar.xz / 将centos7系统的rootfs添加到空的镜像目录并自动解压出文件系统 丢弃了bootfs 
+	CDM ["/bin/bash"] 执行一个位于bin的bash命令
+
+	FROM debian 从debian上构建工作栈 dockerhub大部分镜像都是类似这样的构建
+	RUN apt-get install emacs
+	RUN apt-get install apache2
+	CMD ["/bin/bash"]
+
+	FROM ubuntu
+	RUN apt-get update && apt-get install -y vim 因为docker镜像的缓存技术 所以这两个命令要写在一起 
+	COPY testfile / 将当前目录的文件复制进镜像 没有就自己生成一个 
 	
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+	FROM busybox
+	MAINTAINER xxx@xxx.com 
+	WORKDIR /testdir 进入容器后的当前目录 如果没有就自动创建
+	RUN touch tmpfile1 在容器里面生成文件
+	COPY ["tmpfile2", "."] 从build context复制这个文件到镜像 如果没有会报错
+	ADD ["bunch.tar.gz", "."] 跟COPY一个效果 但会自动解压
+	ENV WELCOME "u are in my container" 环境变量 有点蛋疼书没有讲清楚 进入容器后echo $WELCOME就会出现这句话
+rootfs
+	linux系统的内核空间是kernel 开机时候看到的那些妖蛾子代码是bootfs文件系统 然后就不见了
+	正常用户系统是rootfs 比如/dev /proc /bin
+	而通过docker打造的diy镜像是直接在dockerhost的kernel上面叠加自定义的rootfs 没有bootfs所以非常的轻量级
+kernel
+	这里有些绕
+	比如我在linux的ubuntu上面安装docker它的内核是uname -r 这个就是hostkernel 
+	基于这个hostkernel搭建出来的轻量级镜像比如上面的cento7的hostkernel是不一样的
+	docker run -ti centos 或相关命令进入到容器后cat /etc/redhat-release 确认是cento7 uname -r 确认centos7的内核 与host一致
+	所有容器都共用dockerhost的内核 而且没有办法升级kernel 如果工作栈有内核要求 要改用虚拟机
+	有些linux系统会有几个内核 
+docker commit
+	docker run -ti ubuntu
+	vim 可能会没有需要的工具
+	apt-get install vim
+	docker ps 查看id
+	docker commit 旧id 新id 改动过的容器保存为新镜像
+	docker images 确认新id
+	docker run -ti 新id
+	which vi 成功安装
+docker build
+	上面写好的dockerfile需要通过这个命令来运行
+	pwd 当前目录
+	ls 查看是否有dockerfile 这个文件似乎不需要带后缀也不用区分大小写 但一定要有这么几个字符 docker版本问题
+	docker build -t ubuntu-with-vi-dockerfile . 这个标点不能少 -t是镜像起名
+	然后就是构建过程 因为版本问题跟教程不一样了
+	build context是当前目录 docker默认从这里找dockerfile 也可以通过-f指定一个目录
+	docker将这个目录的所有文件发送到dockerdaemon 如果构建速度很慢就是文件太多  
+	docker histroy xxxxxx 这个命令可以看到构建过程
+	missing 是无法获取镜像id docker的问题 dockerhub下载的很多都有这个问题
+	--no-cache 如果因为缓存而构建失败可以使用这个后缀
+	由于构建镜像是上下依赖缓存的 所以同样的命令交换顺序之后就会使缓存失效 生成新的镜像
+	这个缓存在构建其他新的工作栈时会提示这个镜像缓存已经存在 只需要把新的东西添加就可以
+	所以dockerhub上面保存的绝大部分镜像都是自动去重的集合 占用的空间其实很小
+dockerfile debug
+	FROM busybox
+	RUN touch tmpfile 
+	RUN /bin/bash -c echo "do something..." 这一步可能会失败 原因是下载的busybox没有bash工具
+	COPY testfile /
+	构建是一步一步依赖缓存镜像的
+	通过找到失败的前一步的最后一个镜像xxxxxxxx
+	docker run -ti xxxxxxx 然后输入第三步的命令/bin/bash xxx 发现就是没有bash
+	根据工作量可以在busybox里面安装提交 或者直接在dockerfile里面添加安装指令
+RUN VS CMD VS ENTRYPOINT
+	RUN 
+		两种格式
+			RUN apt-get update && apt-get install ...
+			蛋疼忽略
+	CMD 
+		三种格式
+			CMD["命令","参数","参数"]  这是推荐格式
+			...ENTRYPOINT...CMD["参数","参数"] 
+			CMD 命令 参数 参数
+		优先级低于docker run后面的参数
+			dockerfile CMD echo "hello world"
+			docker run -ti image /bin/bash 此时会忽略掉CMD
+	ENTRYPOINT 
+		优先级高于docker run的参数 不会被忽略
+		格式一
+			ENTRYPOINT ["executable","param1","param2"] 
+			ENTRYPOINT ["/bin/echo","hello"] CMD ["world"]
+				可以后接CMD作为补充 但会被docker run的参数覆盖掉
+				docker run -ti image yoo 会得到hello yoo
+		格式二
+			ENTRYPOINT 命令 参数 参数 
+				忽略掉CMD与docker run 
+SHELL VS EXEC
+	上面三种命令的指定方式又有两种
+	从下面的比较看出shell倾向于执行电脑的 exec倾向于执行人脑的 类似py2与py3
+	EXEC的可读性更强一些
+	SHELL
+		RUN apt-get install python3
+		CMD echo "hello world"
+		ENTRYPOINT echo "hello world"
+		shell格式调用的方式是/bin/sh -c xxx 这个xxx部分会被shell进行解析 替换成环境变量
+		ENV name yoo ENTRYPOINT echo "hello $name"
+		输出是hello yoo 环境变量$后面的参数会被替换成ENV设定的name的具体参数yoo
+	EXEC 
+		格式就已经不一样
+		RUN ["apt-get", "install", "python3"]
+		CMD ["/bin/echo", "hello world"]
+		ENTRYPOINT ["/bin/echo", "hello world"]
+		一样的命令但直接调用/bin/sh -c xxx 不会被shell解析而替换变量 直接输出
+		ENV name yoo ENTRYPOINT ["/bin/sh", "echo hello $name"]
+		得到的是hello $name 具体参数直接被输出而不被shell解析
+		如果要解析这个参数那么
+		ENV name yoo ENTRYPOINT ["/bin/sh", "-c", "echo hello $name"]
+上传镜像
+	built -t镜像不tag就会默认为image:latest
+	这是个坑最好tag上 可以是数字也可以是字符串
+	docker tag image-v110 image:1 儿童版
+	docker tag image-v110 image:1.1 少年版
+	docker tag image-v110 image:1.2 成人版
+	版本升级后
+	docker tag image-v111 image:1 儿童版
+	...
+	...
+	反正版本多的时候做个集合tag 似乎是可以全部版本一次性tag起来的 不过也容易出错
+registry
+	dockerhub的仓库
+	注册账号然后登陆
+	docker login -u xxx 输入密码后登陆成功
+	由于同名镜像太多 需要用dockerhub上注册的账号名区分
+	docker tag httpd dockerhubname/httpd:xxx
+	docker push dockerhubname/httpd:xxx
+	由于本地仓库的镜像集合有多个版本如果要全部上传就不用tag后缀了
+	docker push dockerhubname/httpd
+	下载就是pull
+本地registry
+	不能上传的只能放本地 
+	连registry仓库本身都是一个镜像
+	docker run -d -p 5000:5000 -v /myregistry:/var/lib/registry registry:2
+	-d 后台运行
+	-p 端口映射 将host的5000端口映射到容器的5000端口 有些端口是固定有些不是 5000是registry的服务端口
+	-v 将host的/myregistry目录映射到容器里面的/var/lib/registry 显然是先有host再有容器 因为容器的镜像可能还要下载
+	docker tag username/httpd:v1 registry.example.net:5000/username/httpd:v1
+		镜像的完整名称是[registry-host]:[port]/[username]/xxx 所以上面的tag这么长 
+		这个host似乎没有讲清楚 可能是局域网内一个邮箱就是一个host 共用一个公司仓库
+		只有dockerhub上面的镜像可以省略registry-host:[port] 
+	docker push registry.example.net:5000/username/httpd:v1
+		这里显示成功push了 可能就是通过tag将[registry-host]:[port]/[username]/xxx的格式对应上了
+		跟dockerhub比起来就少了一个login的步骤 在本地不需要login但前面做了一个host到容器的5000映射
+	docker pull registry.example.net:5000/username/httpd:v1
+		这是在本地的拉取 要比dockerhub的长一些 多了个registry-host跟端口
+		看来远程登陆就是通过host跟端口
+		这个registry支持认证以及https之类的安全设置
+rmi
+	只能删除host上面的镜像 比如本地docker下载的一大堆 但不会删除registry里面的镜像
+	而且一大堆tag的同名镜像必须全部删除才能删除干净 不然就是去tag操作
+search
+	docker search httpd
+容器持久化
+	docker run ubuntu /bin/bash -c "while true ; do sleep 1; done" bash命令不退出容器也不退出 while true使命令循环不退出
+		这是最简单的持久化方法 但占用一个终端 -d可以后台运行
+进入容器
+	attach
+		docker run -d ubuntu /bin/bash -c "while true; do sleep 1; echo i am 110; done"
+		docker attach 容器id 会看到持续的输出 退出attach ctrl+p 然后ctrl+q
+	exec
+		docker exec -ti 容器id bash 或者sh 有些镜像有sh而没有bash
+		ps -elf 会看到bash命令是一号进程 
+	区别在于attach开终端不开进程 exec开终端又开进程
+	logs
+		docker logs -f 容器id 这个直接看输出 不开终端不开进程 -f=tail -f 是持续打印
+容器类别
+	服务类
+		以daemon形式运行 对外服务 
+		比如web server 数据库 通常必须带上-d 进入是exec -ti
+	工具类
+		这种就是一般的工作栈
+		进入是run -ti
+		docker run -ti busybox
+		wget www.baidu.com
+容器关闭
+	容器是dockerhost的一个进程
+	docker stop 是向容器发送sigterm信号
+	docker kill 是向容器发送sigkill信号 这个是快速关闭
+容器开启
+	如果容器处于关闭状态可以重启
+	docker start 但是会保留第一次启动时的所有参数 所以会发现不能中途更改某些参数
+	docker restart 
+	docker run -d --restart=always httpd 常用于服务类容器 因为可能出现问题而关闭了 但是可以立刻自动重启
+容器删除
+	docker rm a b c d e f g 
+	docker rm -v $(docker ps -aq)
+	docker rm -v $(docker ps -aq -f status=exited)
+镜像删除
+	docker rmi 其他一样
+资源分配
+	cpu io 物理内存 swap
+		docker run -m 200M --memory-swap=300M ubuntu
+			最多使用200MB的内存和100MB的swap 默认是-l 没有限制
+	progrium/stress
+		docker run -ti -m 200M --memory-swap=300M progrium/stress --vm 1 --vm-bytes 280M 
+			这个镜像用来进行资源分配的测试
+			-vm 1 表示启动1个内存线程
+			-vm-bytes 280M 表示每个线程分配280M 内存 如果改成300M会报错 因为没有那么多资源可以分配
+		docker run -ti -m 200M ubuntu
+			这里没有指定swap 那么swap默认是-m的两倍
+		docker run --name idA -c 1024 ubuntu docker run --name idB -c 512 ubuntu 
+			-c 表示--cpu-shares 是相对值 并且当某个容器处于空闲时 另外一个会占用全部资源
+			上面这个是教程印刷问题 不知道要不要合并在一起写
+		docker run --name idA -ti -c 1024 progrium/stress --cpu 1
+			--cpu 1 是工作线程数量 如果dockerhost占用的是1个cpu 那么顶多只能分配1了 
+		docker run --name idB -ti -c 512 progrium/stress --cpu 1
+			查看当前系统host的资源数据 比如linux系统的另外开个终端输入top
+			如果idA的cpu是idB的两倍那么就生效了 
+		docker run -ti --name idA --blkio-weight 600 ubuntu docker run -ti --name idB --blkio-weight 300 ubuntu
+			--blkio-weight 也是相对值 是阻塞io的值 表示硬盘读写占用的带宽
+			--device-read-bps 设备的每秒读数据量
+			--device-write-bps 设备的每秒写数据量
+			--device-read-iops 设备的IO读次数
+			--device--write-iops 设备的IO写次数
+		docker run -ti --device-write-bps /dev/sda:30MB ubuntu
+			time dd if=/dev/zero of=test.out bs=1M count=800 oflag=direct
+				这里有点绕 涉及一些硬件部分的sad数据线 
+				由于容器的文件系统是在host的/dev/sda上映射来的 所以容器写操作就是在host上写
+				oflag=direct 指定IO的方式为direct 这样--device-write-bps才能生效
+				结果显示没有超过30m就是成功的
+		docker run -ti ubuntu
+			time dd if=/dev/zero of=test.out bs=1M count=800 oflag=direct
+				这里没有限速 具体看电脑配置 教程的结果是1.6G是远远高于30M的
+容器底层技术
+	cgroup
+		资源分配
+		linux系统也有这个
+		--cpu-shares -m --device-write-bps
+		/sys/fs/cgroup 在系统的这个地方
+		docker run -ti --cpu-shares 512 progrium/stress -c 1
+			ls /sys/fs/cgroup/cpu/docker/容器id
+			这是linux系统为容器分配的 同理有memory内存 blkio阻塞IO
+	namespace
+		资源隔离
+		linux的6个namespace
+			mount namespace
+ 				容器拥有自己的 / 目录 可以mount unmount 只在当前容器生效不影响host
+			uts namespace
+				容器拥有自己的hostname 默认就是docker分配的短id
+				docker run -h myhostname -ti ubuntu
+					进入容器后输入hostname 显示hostname
+			ipc namespace
+				容器拥有自己的共享内存和信号量semaphore 用来实现进程间通信 不会跟其他host容器混淆
+			pid namespace
+				容器拥有自己的子进程
+				ps axf 可以看到运行中的容器进程出现在dockerd进程下 也可以看到容器的子进程
+				docker exec -ti id bash
+					ps axf 发现里面的进程跟host的隔离开了
+			network namespace
+				容器拥有自己独立的网卡 ip 路由
+			user namespace
+				容器拥有自己的用户账号管理
+				docker exec -ti id bash
+					进入后useradd 用户名
+					退回返回到host输入su - 用户名 发现没有这个用户
+docker网络
+	docker network ls
+	bridge
+		brctl show 输入后看到docker0 这是linux bridge 默认容器网络都挂在这个docker0 默认interfaces是空的
+		docker run -d httpd
+			brctl show 此时的interfaces出现veth的虚拟网卡
+			docker exec -ti id bash
+				ip a 没有网络工具要自己装
+				这个时候显示另一个虚拟网卡 名字不是veth但跟veth组成一个pair
+				因为容器隔离技术把网卡也隔离了 实际上就是docker0的那个veth
+				可以把容器的网卡看成是veth的逆 也可以看成是一对pair
+		docker network inspect bridge
+			找到容器的对应id 然后找到对应的subnet gateway
+			由于此时网络是挂在docker0上 所以网关就是docker0的网关
+			subnet这个是子网 /16表示16位掩码 因为一个docker0可以挂一大堆容器网卡 确保有足够多的ip可以用
+	host
+		docker run -ti --network=host busybox
+			ip l 如果没有网络工具要自己安装
+				这里会看到本机系统host的所有网卡 hostname也是host的
+				网速会更快 但是容易跟host发生端口冲突 因为用的就是host的网
+				多个host之间的容器网络方案也是用这种网络 需要很多配置比如iptables
+	none
+		只有lo 没有网卡
+		docker run -ti --network=none busybox
+			ifconfig 如果显示没有网络工具 要自己安装
+			对安全性要求高不需要联网的容器就用none
+自定义网络
+	user-defined
+	网络驱动有bridge overlay macvlan
+	docker network create --driver bridge netname
+		brctl show 发现多了一个网桥br id就是netname这个容器的id 意思就是创建了一个网桥方式的网络容器
+	docker network inspect netname
+		找到对应id 发现driver就是bridge 然后ip是docker自动分配的 但是可以自己手动指定
+	docker network create --driver bridge --subnet 172.22.16.0/24 --geteway 172.22.16.1 netname2
+		这里就是手动指定的 跟自动分配的不一样 同样是bridge
+		brctl show 找到新网桥的id
+			ifconfig 新id 会显示出新id对应的ip 跟手动指定的一样 
+	docker run -ti --network=netname2 busybox
+		既然容器可以挂在docker0这个网桥上 那么容器也可以挂在自定义的netname2这个网桥上
+		这样就变成了容器连接容器 已经是工作栈的样子了
+		ip a 得到的ip就是手动指定的 
+	docker run -ti --network=netname2 --ip 172.22.16.8 busybox
+		之前的几次都是docker分配或docker从子网里面自动分配 这次是真正的自定义ip+自定义子网ip
+		ip a 找到对应网卡位置的ip 发现的确是手动指定的
+		这种指定方法必须通过--subnet手动指定子网生成的网络容器方式才有效
+		docker run -ti --network=netname ip 172.18.0.8 busybox
+			此时切换回默认的docker0网桥 由于没有手动指定子网 所以会报错
+	从这里开始教程就有点乱了 因为涉及多容器 多终端 多网桥方案
+	通过上面的方式生成两个busybox容器 然后各自都指定同一个网桥容器方案 比如都指定自定义的netname2
+	然后可以打开两个终端互相ping 也可以-d后在同一个终端ping
+	找到busybox各自的ip 可以通过各自的虚拟网卡 也可以进入容器内部ip a 但有些容器是没有自带网络工具的 
+	ifconfig 网卡id
+		ping -c 3 ip1
+		ping -c 3 ip2 发现两个都可以ping通 说明是在同一个网络中
+	netname2与默认的netname不能通信 因为不是同一个网桥 比如用httpd指定默认netname 用busybox指定netname2
+	然后ping一下各自的ip 发现的确不通 但是应该可以通过路由通信
+	如果本机host对每一个网桥都有路由并且系统打开了ip forwarding 那么host就成了一个路由 因为都通了 但发现不是
+	ip r 发现各自的网卡都有路由 从0到网关1 
+	ip forwarding 发现启用了
+	iptables-save 发现docker-isolation的隔离设置把两个网桥的流量drop掉了 也就是上面的一大堆推理不成立
+	docker network connect netname2 httpd的容器id
+		这里是把httpd容器加入到自定义网络方案里面 这样就跟busybox同一个网络了
+		进入httpd后ip a 确认的确跟busybox同一个网段了
+		有些容器没有自带ping 但可能会有curl wget 之类的网络命令 
+容器间通信
+	ip
+		就是上面这一大堆 生成网络容器 --network指定 docker network connect加入
+	docker dns
+		上面方式的补充 因为容器太多的时候无法预先确定一大堆ip 容易出问题
+		docker110开始docker daemon实现了内嵌的dns server 可以直接用容器名通信
+		docker run -ti --network=netname2 --name=bbox1 busybox
+		docker run -ti --network=netname2 --name=bbox2 busybox
+			现在在bbox2里面 ping -c 3 bbox1 发现通了
+		docker run -ti --name=bbox3 busybox
+		docker run -ti --name=bbox4 busybox
+			现在在bbox4里面 ping -c 3 bbox3 发现不通 原因docker dns并不支持默认的docker网桥
+	joined
+		这种方式可以在多个容器里面共享一个网络栈 共享网卡和配置信息
+		docker run -d -ti --name=web1 httpd
+		docker run -ti --network=container:web1 busybox
+			ip a 
+			这里并没有用ip那种方式生成一个网桥方案而是直接把httpd的容器当成是一个网桥容器
+			然后busybox容器就直接被指定到这个httpd网桥容器 所以busybox会共用到httpd里面的网络信息
+			docker exec -ti web1 bash
+				ip a 发现跟上面的网络信息是一样的 连mac地址都一样
+				进入busybox容器后直接 wget 127.0.0.1就直接访问到httpd容器的信息了
+		当容器非常多的时候这种方式就非常灵活了比如webserver与appserver这样有数据依赖的组合 
+		而且也会监控到容器里面网络流量 如果发现某些app的流量异常 应该就是被黑客join了
+容器连接外部
+	NAT
+		iptabels -t nat -S
+		找到172.17.0.0 docker0这一条 意思就是172ip把数据发送到docker0然后交给MASQUERADE处理
+		处理方式就是将数据包的源地址换成本机系统host的地址发送出去 这里是一个ip换成了另一个ip叫做nat转换
+		现在开始教程又开始乱了
+			开始通过对路由的相关数据抓包
+			ip r 这个是路由 看看dockerhost是通过哪个网卡发送信息出去的
+			进入busybox容器 ping bing.com 这个时候是循环一直ping的 然后在其他终端抓包
+			tcpdump -i docker0 -n icmp
+				这里就是抓docker0的数据包 显示源地址是172.17.0.2 应该是busybox的地址
+			tcpdump -i 网卡id -n icmp
+				这里就是抓网卡的数据包 就是ip r得到的那个docker0路由出去的网卡 
+				显示的源地址发生了变化 就是MASQUERADE处理的 
+		意思很简单对外与对内的ip不一样 原因应该是相同的ip太多了 所以要区别开来
+外部连接容器
+	docker run -d -p 80 httpd
+	docker ps 发现端口信息是0.0.0.0:32773->80
+	docker port 容器id 发现是80->0.0.0.0
+	意思就是容器80端口映射到host的32773端口 这个是数据通道 所以直接curl 本机hostip:32773就访问到了httpd
+	跟上面的ip网络方案一样 端口也可以自定义
+	docker run -d -p 8080:80 httpd 
+		这个就是将host的8080端口映射到httpd的80端口
+		通常改的是host端口 因为可能已经占用了 而容器端口大多是固定的服务端口
+		curl 本机hostip:8080 成功访问到容器
+	ps -ef | grep docker-proxy
+		跟nat类似 外界访问容器的时候也会有个转换 就是docker-proxy 
+		docker-proxy会监听外界访问的端口 比如上面的32773 如果是正常访问就转发到容器的172.17.0.2:80
+		作用类似于小区门口的保安 
+docker存储
+	storage driver
+		镜像+容器结构 旧数据存储在镜像 新数据存储在容器 
+		新数据有两种
+			镜像复制到容器后作改动 
+			直接在容器中产生的新数据
+		如果多重镜像有文件重名 用户只看到最顶层的那个 因为隔离了
+		aufs ,device mapper ,btrfs ,overlayfs ,vfs ,zfs 这些都是docker支持的存储驱动
+		官方推荐使用linux发行版的存储驱动 兼容性更高
+		docker info
+			找到storage driver这一行就是本机host的发行版存储驱动
+			教程的ubuntu默认驱动是aufs 但现在看到的是overlay2 不知道是版本问题还是什么问题
+		不需要持久化的数据适合存放在这些驱动里 但需要持久化的不适合 
+	data volume
+		本质上是dockerhost文件系统里的目录或者文件 可以直接被mount到容器的文件系统
+		特点
+			是目录或文件这种经过格式化的空间而不是直接一个空的硬盘
+			容器可以读写volume里面的数据
+			可以持久化存储 哪怕容器突然被销毁
+		软件放镜像层 软件产生的数据放volume因为可以持久化存储
+		volume是文件系统一部分容量取决于未使用的空间 教程说目前没有办法设置volume容量
+		bind mount
+			将本地host上已存在的目录或文件mount到容器
+			创建一个文件夹然后创建一个文件比如htdocs/index.html 内容是yooo
+			cat htdocs/index.html yooo
+			docker run -d -p 80:80 -v ~/htdocs:/usr/local/apache2/htdocs httpd:版本号
+				注意这个htdocs是在root下的文件夹 如果在其他地方创建要补全路径
+				文件夹名不用相同
+				curl的目标html文件在不同镜像的路径是不一样的 比如上面的httpd换了nginx访问到的是其他路径的html
+				要找到这个html的路径文件夹映射进去才能修改
+			curl 127.0.0.1:80  yoo
+			echo "yoo again" > ~/htdocs/index.html
+				在本地host修改html
+			curl 127.0.01:80 yoo again
+			默认权限是读写 可以改写只读ro
+			docker run -d -p 80:80 -v ~/htdocs:/usr/local/apache2/htdocs:ro httpd:xxx
+			docker exec -ti xxx bash
+				echo "do something" > htdocs/index.html 发现权限只读
+					要在htdocs的上一级目录或者把路径补全不然提示没有这个目录
+			docker run -d -p 80:80 -v ~/htdocs/index.html:/usr/local/apache2/htdocs/newindex.html httpd:xxx
+				本地host的源文件必须存在不然会当成一个目录mount到容器里面去
+			curl 127.0.0.1:80/newindex.html
+				有些镜像本身没有安装vim通过这个方法可以修改到容器里面的文件
+				这是一个非常邪恶的技术...发展潜力可能非常巨大
+			bindmount简单直观但是需要指定host的某个路径 所以移植性不好
+		docker managed volume
+			不需要指定mount源
+			docker run -d -p 80:80 -v /usr/local/apache2/htdocs httpd:xxx
+				没有mount源
+			docker inspect xxx
+				找到mount的source 它就是mount源 docker自动生成了mount目录	
+			curl 127.0.0.1:80
+				由于没有mount源但是建立了映射所以mountpoint成了mount源
+				由上面的storagedriver可知这个无需持久化的httpd原本是存储驱动管理的 但现在它成了volume
+				这种方式也有点像join 将docker生成的volume目录join到storagedriver里去
+				所以这个无mount源的volume继承了httpd容器里面的信息
+			echo "do something" > /var/lib/docker/volumes/xxxxxxxxxx/_data/index.html
+			curl 127.0.0.1:80 do something
+		docker volume ls
+			看不到bindmount也看不到对应的容器 可以配合docker inspect
+数据共享
+	容器与host之间
+		docker run -d -p 80:80 -v /usr/local/apache2/htdocs --name 11 httpd
+		docker cp ~/htdocs/index.html 11:/usr/local/apache2/htdocs
+			dockercp可以在容器与host之间复制数据
+			这个cp命令既是docker也是linux的
+			如果通过linuxcp那么要复制到/var/lib/docker/volumes/xxx 的这个docker生成的volume
+		curl 127.0.0.1:80
+	容器之间
+		弄个容器集群 bindmount方式
+			docker run -d -p 80 -v ~/htdocs:/usr/local/apache2/htdocs --name 11 httpd:2.4	
+			docker run -d -p 80 -v ~/htdocs:/usr/local/apache2/htdocs --name 22 httpd:2.4
+			docker run -d -p 80 -v ~/htdocs:/usr/local/apache2/htdocs --naem 33 httpd:2.4
+			docker ps 看端口
+			curl 127.0.0.1:xxx
+			curl xxxx
+			curl xxxx
+			echo "yoo one" > ~/htdocs/index.html
+			curl 127.0.0.1:xxx 看到的是yoo one
+			curl xxx
+			curl xxx
+		volume方式
+			docker create -v ~/htdocs:/usr/local/apache2/htdocs -v /other/useful/tools --name data busybox
+				这里用的是create因为volume不需要运行只是提供数据的 有点像存储驱动那部分的镜像+容器的镜像
+				而且这里映射出两种mount源 看来一个存储容器可以映射多个mount源 也是跟join的方式类似
+				docker inspect data 
+					找到mount部分 可以看到有两个mount源
+			docker run -d -p 80 --volumes-from data --name 11 httpd:2.4
+			docker run -d -p 80 --volumes-from data --name 22 httpd:2.4
+			docker run -d -p 80 --volumes-from data --name 33 httpd:2.4
+				三个容器都加载同一个数据volume容器 也是跟之前的join类似
+				docker inspect 11
+				docker inspect 22
+				docker inspect 33
+					发现mount源跟data容器一模一样
+				docker ps
+				echo "yoo two" > ~/htdocs/index.html
+				curl 127.0.0.1:xxx 发现是yoo two
+				curl xxx
+				curl xxx		
+			这种方式的特点是mount源是可以是不同的  但是mountpoint是一样的 
+		data-packed方式
+			上面两种方式的数据都是存储在host里而这种方式可以将数据容器打包成镜像然后放到云存储
+			创建datapack文件夹cd进去创建htdocs文件夹cd进去创建index.html 内容yoo
+			打包htdocs的数据 同级目录创建dockerfile 大小写不分
+			FROM busybox:latest
+			ADD htdocs /usr/local/apache2/htdocs
+			VOLUME /usr/local/apache2/htdocs
+				VOLUME等同-v ADD等同cp 现在可以看到dockerfile真的很方便
+				没有指定mount源是docker生成的 这里的htdocs是busybox的mountpoint
+			docker build -t datapack .
+				将数据volume生成一个镜像 
+			docker create --name data datapack
+				创建一个数据容器 这时候就能体会到容器的方便了 怎么折腾数据都不会有问题
+			docker run -d -p 80:80 --volumes-from data httpd:2.4
+				加载数据容器的数据比如httpd的配置信息 这个数据容器不依赖host可以从远程拉取比如dockerhub
+				curl 127.0.0.1:xxx 发现是yoo 
+数据生命周期
+	由于上面的volume存放的数据主要是通过应用软件产生的有些重要有些不重要所以有备份恢复迁移销毁
+	备份
+		docker run -d -p 5000:5000 -v /myregistry:/var/lib/registry registry:2
+			本地镜像都保存在host的myregistry目录中 就是备份这个目录
+	恢复
+		比如本地myregistry的数据出问题了就从其他地方拉取数据镜像比如dockerhub 有点像linux的apt-get update
+	迁移
+		docker run -d -p 5000:5000 -v /myregistry:/var/lib/registry registry:latest
+			先停止原有registry容器的映射 然后映射到新版的registry 这样就迁移了 最好确认一下新版仓库的映射路径mountpoint
+	销毁
+		bindmount
+			docker删不了 要在host里操作
+		dockervolume
+			慎重操作 删除后就不见了 一定要做好备份比如dockerhub之类的地方
+			docker rm -v 
+				这样就会在删除容器的时候把映射的数据volume也删除 但是为了保护数据只能在没有其他容器mount这个数据volume的前提下成功删除
+			docker rm
+				会产生僵尸
+				docker volume ls 会看到一大堆
+				docker volume rm xxx 这样可以删除volume
+				docker volume rm $(docker volume ls -q)  批量删除
+多host管理
+	dockermachine
+		由于每个host都要重复安装证书添加key添加源安装docker所以效率低并且容易出现不一致
+		通过dockermachine可以批量安装和配置host 支持本地远程各种各样的物理虚拟系统
+		这些工作环境统称为provider dockermachine为每个provider提供特定的驱动和配置
+		github.com/docker/machine/releases
+			这里有下载命令由于linux的玩法很多人都不会所以docker官网只提供桌面版
+		docker machine-version 成功安装就会显示版本
+		现在准备3个host 本机算一个 可以远程可以本地虚拟比如容器
+		教程到了这里已经变得非常恶心涉及ssh driver 
+		通过ubuntu安装ssh然后尝试很多次之后由于不明白原理所以一点点配置变动就登陆失败
+		在官网找到带有ssh的其他镜像尝试后比如ssh-xxx-ubuntu后可以直接ssh登陆到容器
+		按照教程添加ssh-copy-id后也可以登陆到容器但是添加machinehost的时候还是有各种报错
+		docker inspect 查看容器ip
+		ssh-copy-id 容器ip 将钥匙复制进去 machine创建host的时候要用这个
+		按回车好像会报错输入yes
+		密码要进入容器里修改免密码或者提供一个简单的密码
+		passwd 输入密码
+		ls -l 检查钥匙权限 600 644 
+		cd .ssh 如果出问题的话删除known_hosts
+		docker-machine create --driver generic --generic-ip-address=172.17.0.2 host1
+			没问题的话就成功创建host1并在容器里面安装docker以及相关配置 
+			docker-machine ls
+				由于卡在ssh的id_rsa认证的相关配置太久了 暂时不再尝试
+				以前曾经成功一次问题好像是没有配置本地host的ip监听
+				可以考虑用其他方式替代ssh
+			docker exec 或者直接ssh进去查看docker配置
+				/etc/systemd/system/docker.service 可以看到跟本地host类似的docker配置
+					-H 0000表示接受远程连接 -tls表示启用安全认证和加密
+			hostname
+				host1
+		同理创建host2 
+		docker -H tcp://xxxxx:xxx ps
+			创建好远程host之后通过这个命令连接
+		docker-machine env host1
+			显示访问host1需要的环境变量
+			eval $(docker-machine env host1)
+				如果配置了教程前面的多host管理脚本的话
+				所有在本地host的命令都可以批量执行在其他host里面去
+				效果类似于五火球神教
+			docker run -tid busybox
+				测试machine效果
+				docker ps 可见busybox
+				eval $(docker-machine env host2)
+				docker ps 不可见
+		docker-machine upgrade host1 host2
+			当host越来越多的时候里面的docker版本可能就不一致了
+		docker-machine config host1
+			查看远程host的dockerdaemon配置
+		docker-machine start/stop/restart host1 host2
+			开机关机重启远程host系统 daemon还在等同于网管
+		docker-machine scp host1:/tmp/a host2:/tmp/b
+			跟上面的复制玩法一样 但这是多host之间的远程复制 非常方便
+多host通信
+	docker自带的overlay macvlan
+	第三方flannel weave calico
+	第三方开发迭代快必定有个接口跟docker交互它是libnetwork CNM
+	分别是docker的库网络与库网络的核心定义容器网络模型
+	CNM
+		sandbox
+			容器网络栈 包含容器网卡路由表dns
+			linux network namespace就是这种沙盒
+		endpoint
+			将sandbox接入network 比如veth pair
+			由于网络被隔离所以endpoint只属于某个容器的某个网络
+		network
+			一堆endpoint的集合 在这个集合里面可以互相通信
+			比如linuxbridge 与vlan
+	overlay
+		docker用户通过它创建基于vxlan的overlay网络 可以将二层数据封装到udp进行传输
+		vxlan是vlan的强化版 相关细节作者写在openstack的书里面
+		docker通过键值对保存相关网络信息 consul etcd zookeeper都是通过键值对与docker交互
+		consul
+			docker run -d -p 8500:8500 -h consul --name consul progrium/consul -server -bootstrap
+				http://本机dockerhost的ip:8500 可以访问consul
+					路由走的就是本地dockerhostip
+				/etc/systemd/system/docker.service
+					修改host1 host2的dockerdaemon配置
+					cluster-store=consul://dockerhostip:8500
+						这个ip似乎是本机docker监听的ip
+						因为consul容器的数据通过这个ip路由出去
+					cluster-advertise=路由网卡:2376 
+						这个似乎是本机广播的网卡
+						因为本机host可以有多个物理或虚拟网卡
+						但本机docker监听的ip不一定就走同一个网卡
+				systemctl daemon-reload 
+				systemctl restart docker.service
+					由于machine与host1host2是连通的
+					而且docker与consul映射了8500端口
+					所以在远程host上配置本机machineip:8500就能注册到consul上
+					配置的ip是machine的ip而不是远程host的ip
+					因为远程host可以有数百个如果都配置一个独立ip那么machine就没用了
+					machine集群管理的方便就体现在这里
+				进入host1
+					创建overlay网络
+					docker network create -d overlay ovnet1
+						-d 是-driver 跟前面的-d不一样
+					docker network ls 
+						会看到overlay是global而其他是local
+				进入host2
+					docker networl ls
+						发现跟host1一样跟上面的join方法类似
+				本机host
+					docker network insepct ovnet1
+						IPAM是ip地址管理 docker自动为ovnet1分配的是子网10.0.0.0
+				docker run -tid --name bbox1 --network ovnet1 busybox
+					通过这个consul集群的overlay网络方案创建busybox容器
+				进入host1
+					docker exec bbox1 ip r
+						发现两个网卡接口教程是eth0 eth1 具体看本机网卡
+						eth0 10002连接的是overlay创建的ovnet1
+						eth1 1721702 容器默认是走这个ip
+						dockermachine会创建一个bridge网桥叫docker_gwbridge跟前面的bridge区分开
+						这是host集群里面各自容器走外网的网桥 跟本机docker的bridge效果一样
+				docker network inspect docker_gwbridge
+					找到subnet子网部分 可以看到bbox1的ip就是属于这个网段
+					而docker_gwbridge的ip就是容器的网关 跟前面本机网络部分是一样的
+					ifconfig docker_gwbridge
+					docker exec bbox1 ping -c 2 bing.co
+				docker run -p 80:80 --net ovnet1 --name web1 httpd
+					如果外网要访问某个远程集群容器那么在本机host做端口映射		 
+					这是某个host里创建的服务类容器 网络方案是在本机host构建的所以要在本机映射
+					这样的应用场景比如负载均衡 某个host出问题了可以切换到其他host 但本机host不会有问题
+				进入host2
+					docker run -itd --name bbox2 --network ovnet1 busybox
+						上面的bbox1是在本机host创建的为了验证在本机搭建的consul没问题
+						没问题之后就验证集群host与本机consul是否也没问题
+						docker exec bbox2 ip r
+							eth0 10003
+						docker exec bbox2 ping -c bbox1
+							dockerdns也没问题 跟前面的网络部分是一样的
+				总结overlay
+					docker为overlay网络创建networknamespace 
+					产生一个linux bridge br0 	
+					产生一对veth pair 一共是两个endpoint
+					一个endpoint连去br0 一个连去容器里面的虚拟网卡比如eth0 网卡具体看本机
+					br0除了连接所有集群容器的endpoint还连接到vxlan
+					这个vxlan与br0组成一个vxlantunnel
+					这个通道把所有容器的数据都连通起来了
+					所以在这个通道内集群host内的集群容器可以互连
+					简单来说就是集群内外互连与集群内内互连
+				进入host1
+					查看overlay的namespace 
+					ip netns
+						教程提示要确保执行过这个命令 但不知道是在本机host还是在哪里
+						ln -s /var/run/docker/netns /var/run/netns
+						会发现host1host2有一个相同的namespace xxxxxxxxxx
+						这个namespace就是docker为每一个overlay创建的 这里具体是为ovnet1创建的
+						ip netns exec xxxxxxxxxxxxx brctl show
+							会发现除了br0连接的网卡还有一个vxlan1
+							这个网卡找不到对应的网桥 因为是集群共用的复杂度高没有预设属性
+						ip netns exec xxxxxxxxxxxx ip -d l show vxlan1
+							发现vxlan id是256 
+		overlay网络隔离
+			集群内部可以有多个overlay 相互之间是隔离的
+			进入host1
+				docker netework create -d overlay ovnet2
+				docker run -tid --name bbox3 --network ovnet2 busybox
+				docker exec -ti bbox3 ip r
+					分配到的ip是10012
+				docker exec -ti bbox3 ping -c 2 10.0.0.2
+					发现ovnet1与ovnet2之间ping不通
+				docker exec -ti bbox ping -c 2 172.17.0.2
+					发现overlay与docker_gwbridge之间也不通
+					这是因为br0与vxlan组成的通道内都是隔离的 除非指定网桥解除隔离
+				docker network connect ovnet1 bbox3
+				docker exec -ti bbox3 ping bbox1
+					这时候就通了 因为指定了网桥解除了隔离 跟前面网络部分是一样的
+		ovrelay IPAM
+			docker默认为overlay分配子网淹码100x0/24 所有host共享这个子网
+			容器启动会按顺序分配这个网段直到用完 跟前面网络部分一样 可以手动指定子网
+			docker network create -d overlay --subnet 10.22.1.0/24 ovnet3
+				这样就可以避免集群子网ip不够导致的冲突
+	macvlan
+		docker自带的另一款多host网络驱动 它本身是linux kernel模块
+		功能是允许同一个物理网卡配置多个mac地址 也就是多个虚拟网卡 每个网卡可以配置自己的ip
+		由于它是网卡虚拟化技术 所以docker也用它实现多host网络
+		它的最大特点是性能非常好 不需要创建linux bridge而是直接通过以太网卡连接到物理网络
+		分别进入host1 host2 设置
+			ip link set 本机网卡id promisc on
+				确保多个虚拟网卡的数据都可以从这里路由出去		 
+			ip link show 网卡id
+				找到promisc up 与state up
+				教程里的host1host2是通过VB虚拟机创建的 还需要设置网卡配置为混杂模式 promiscuous mode 
+			docker network create -d macvlan --subnet=172.16.86.0/24 --gateway=172.16.86.1 -o parent=网卡id macnet1
+				通过macvlan驱动为集群host创建macnet网络方案 指定子网网关以及路由的物理网卡
+				macvlan默认是本地网络应用到host集群需要自己指定子网
+				同时docker不会为macvlan创建网关需要自己手动指定网关 不然路由不出去
+				-o parent就是macvlan自身的命令 用来指定路由的真实网卡
+			进入host1
+				docker run -tid --name bbox1 --ip=172.16.86.10 --network macnet1 busybox
+					在host1创建容器指定刚才创建的mac网络方案测试是否ok
+			进入host2
+				docker run -tid --name bbox2 --ip=172.16.86.11 --network macnet1 busybox
+					跟overlay类似集群内部的macvlan命名空间应该也是隔离的 所以自动分配ip可能会发生冲突
+					所以手动指定了一个ip跟host1区别开来
+				docker exec bbox2 ping -c 2 172.16.86.10
+					发现能ping通但是不能直接ping通bbox1的dns
+					docker110后内嵌的dns功能可能就源于这里
+					很多网络的dns出问题可能也是类似于这种情况
+		macvlan网络结构
+			进入host1
+				brctl show
+					不依赖linux bridge 发现没有
+				docker exec bbox1 ip link
+					发现一个类似本机网卡的id但是有一点区别 应该就是真实网卡的虚拟化id
+				ip link show 本机网卡id
+					发现虚拟化id的对应号码
+					这种虚拟化技术能够让容器无需通过nat和端口映射就能与外网通信 跟独立的host没有区别
+					所以本质上也是一种隔离技术 docker就是基于linux这种命名空间技术发展出来的
+		sub-interface实现mutil-macvaln
+			进入host1
+				docker network create -d macvlan -o parent=本机网卡id macnet2
+					发现报错 原因是linux的设定 一个host只能有一个macvlan
+					由于macvlan有限那么macvlan生成的网络方案就有限了所以搞了个sub-interface在macvlan后生成带后缀的子网卡就可以搞一大堆macvlan网络方案
+					vlan是常用的网络虚拟化技术可以将物理二层划分成最多4094个逻辑网络而且在二层里是隔离的 通过独有的id区分
+					如果某个端口只接收单个vlan数据就是access模式 支持多个vlan就是trunk模式
+					教程把更多vlan细节转移到openstack的书
+			分别进入host1 host2
+				/etc/network/interfaces 配置sub-interface 有了它才能支持多macvlan方案
+				auto 网卡id iface 网卡id inet manual
+				autp 网卡id.10 iface 网卡id.10 inet manual vlan-raw-device 网卡id 这就生成了后缀为10的macvlan
+				同理生成后缀20的macvlan
+				启动这两个macvlan子网卡
+					ifup 10后缀id  
+					ifup 20后缀id
+				本机创建macvlan子网卡的子macvlan网络
+					docker network create -d macvlan --subnet=172.16.10.0/24 --gateway=172.16.10.1 -o parent=网卡id10 macnet10 
+					docker network create -d macvlan --subnet=172.16.20.0/24 --gateway=172.16.20.1 -o parent=网卡id20 macnet20
+						这是不同的网卡的不同网络方案 由于docker自动分配ip的问题要手动指定子网避免冲突
+				进入host1
+					docker run -tid --name bbox1 --ip=172.16.10.10 --network macnet10 busybox
+					docker run -tid --name bbox2 --ip=172.16.20.10 --network macnet20 busybox
+				进入host2
+					docker run -tid --name bbox3 --ip=172.16.10.11 --network macnet10 busybox
+					docker run -tid --name bbox4 --ip=172.16.20.11 --network macnet20 busybox
+				进入host1
+					docker exec bbox1 ping -c 2 172.16.10.11  同一个macvlan方案可以
+				进入host2
+					docker exec bbox2 ping -c 2 172.16.20.11  同上
+				进入host1
+					docker exec bbox1 ping -c 2 172.16.20.10
+					docker exec bbox1 ping -c 2 172.16.20.11
+						跨macvlan方案不通 因为二层vlan内是隔离的 但是在三层可以通
+				本机host
+					sysctl net.ipv4.ip_forward 将本机真实网卡的ip设置成虚拟路由
+						输出为1 如果不是则
+							sysctl -w net.ipv4.ip_forward=1
+					/etc/network/interfaces 配置虚拟子网卡 vlan sub-interface 跟上面类似
+					auto 网卡id整数2后缀 iface 网卡id整数2后缀 inet manual
+					auto 网卡id整数2后缀10 iface 网卡整数2后缀10 inet manual vlan-raw-device 网卡整数后缀
+					同上网卡id整数2后缀20
+					启用虚拟子网卡
+						ifup 整数2后缀10
+						ifup 整数2后缀20
+					将网关ip配置到虚拟子网卡
+						ifconfig 整数2后缀10 172.16.10.1 netmask 255.255.255.0 up 
+						ifconfig 整数2后缀20 172.16.20.1 netmask 255.255.255.0 up
+					添加iptables规则 路由虚拟网卡的数据
+						iptables -t nat -A PRSTROUTING -o 整数2后缀10 -j MASQUERADE 
+						iptabels -t nat -A POSTROUTING -o 整数2后缀20 -j MASQUERADE
+						iptables -A FORWARD -i 整数2后缀10 -o 整数2后缀20 -m state --state RELATED,ESTABLISHED -j ACCEPT
+						iptables -A FORWARD -i 整数2后缀20 -o 整数2后缀10 -m state --state RELATED,ESTABLISHED -j ACCEPT
+						iptables -A FORWARD -i 整数2后缀10 -o 整数2后缀20 -j ACCEPT 
+						iptables -A FORWARD -i 整数2后缀20 -o 整数2后缀10 -j ACCEPT
+							这部分规则是真的麻烦 估计是为了突出docker的简单
+				进入host1
+					docker exec bbox1 ping -c 2 172.16.20.11 ok
+						这是从bbox1到bbox4 下面分析是怎么路由数据的
+					docker exec bbox1 ip route
+						网关是172.16.10.1
+				本机host
+					ip route
+						路由数据是从上到下的
+						路由器从整数2后缀10收到数据并分析出目标是bbox4的172.16.20.11
+						然后就会自动找到相关的网桥与网关发现是整数2后缀20负责的 然后路由过去
+						然后通过ARP接口发现bbox4的ip是在host2上 然后就自动找到host2的ip 并且路由过去
+						host2接收到数据然后发给bbox4
+						macvlan的连通与隔离完全依赖vlan ipsubnet与路由而docker本身不做规则限制
+						所以可以直接通过linux自身的vlan管理docker里构建的macvlan
+						这样做的原因我猜测是局域网的ARP欺骗不安全 然后把ARP放docker里了 不知道是不是
+	flannel
+		是coreos开发的网络方案 为每个host分配一个subnet 容器可以从subnet中分配ip
+		而这些ip可以在多host间路由所以容器也可以互连而无需nat与端口映射
+		每个subnet都是从一个足够大的ip池划分的 而每个host都有一个flannelagent 叫做flanneld
+		flanneld负责分配subnet 通过etcd这种类似于consul的键值对分布式数据库接口来存放多host互连所需的各种配置信息 比如ubnet hostip
+		host之间路由数据是通过backend实现的 常用的有vxlan host-gw 跟cousul有点类似
+		etcd
+			跟consul类似 部署在本机host host1host2运行flanneld
+		本机host		
+			github拉取etcd 复制粘贴命令 最后将可执行文件下载到/usr/local/bin
+			etcd -listen-client-urls http://本机ip:2379 -advertise-client-urls http://本机ip:2379
+				打开了etcd监听dockerhostip 并对这个ip进行广播
+			etcdctl --endpoints=本机ip:2379 set foo "bar" 
+			etcdctl --endpoints=本机ip:2379 get foo
+				发现bar 没问题
+			build flannel
+				用于build的镜像托管在gcr.io 现在不知道了 可能docker上已经有
+				docker pull xxxx 用官方的没有就随笔找个 
+				docker tag xxxx gcr.io 改名
+				git clone flannel.git 官网找
+				cd flannel make dist/flanneld-amd64 这里应该是git上面的版本命令 具体看本机系统
+				scp dist/flanneld-amd64 host1ip:/usr/local/bin/flanneld 
+				scp dist/flanneld-amd64 host2ip:/usr/local/bin/flanneld
+			将flannel的配置信息保存到etcd
+				找到flannel-config.json 更改配置信息
+					{"Network": "10.2.0.0/16", "SubnetLen": 24, "Backend": {"Type": "vxlan"}}
+						分别是ip池 子网位 以及多host通信驱动为vxlan
+			
+				etcdctl --endpoints=本机ip:2379 set /docker-test/network/config < flannel-config.json
+					config是etcd的key部分 json是etcd的value部分
+		 		etcdctl --endpoints=本机ip:2379 get /docker-test/network/config
+					得到json信息 就是个数据库操作 类似于redis
+			启动flannel
+				分别进入host1 host2
+					flanneld -etcd-endpoints=http://本机ip:2379 -iface=网卡id -etcd-prefix=/docker-test/network
+						指定etcd挂载的hostip端口 指定多host互连使用的网卡 指定etcd存放flannel配置信息的key
+						成功启动会输出相关信息
+						发现自动分配了一个子网ip
+					ip route
+						发现多了一个规则 10.2.0.0/16通过flannel.1路由 看来顺序调乱了 应该先执行这个命令
+					ip addr show flannel.1
+						可以确定分配了一个子网ip 
+					host2同上 只是分配的子网ip跟host1有点出入
+			配置docker连接flannel
+				进入host1
+					/etc/systemd/system/docker.service
+						设置--bip=10.2.40.1/24 --mtu=1450
+						这两个值必须与/run/flannel/subnet.env中的SUBNET MTU一致 配置文件应该在本机host
+			重启docker daemon
+				systemctl daemon-reload 
+				systemctl restart docker.service
+			ip r
+				发现多了一条规则
+				docker将10.2.40.1配置到docker0上 并添加了路由10.2.40.0/24
+				进入host2
+					同上
+					最终效果是flannel没有创建docker网络 而是直接使用的linux默认的docker0走本地流量
+					多host才用到了flannel.1
+				进入host1
+					docker run -itd --name bbox1 busybox
+					docker exec bbox1 ip r
+					docker exec bbox1 ping -c 2 10.2.17.2  ok
+						开始分析路由
+						docker exec bbox1 traceroute 10.2.17.2
+							这个工具就清晰简单的多了
+							ip r
+								由于不是同一个子网 先走默认网关10.2.40.1也就是docker0
+								然后走多host驱动也就是前面搭建出来的flanne.1 
+								驱动指定为vxlan 然后就通过生成的虚拟网卡发送到host2
+								host2响应驱动发现数据不是一个网段的然后又发给flannel.1处理
+								flanne.1交给docker0处理 docker0最终发送到host2的网关
+								可以通过进入host2 进行ip r确认上面这个过程
+								这么麻烦是因为当集群数量足够多的时候容易产生文件偏移量
+								所以直接在源头确认清楚网段网关路由的相关信息再转发会比较安全
+					docker exec bbox1 ping bbox2
+						可见flannel也不支持hostname的dns服务
+				进入host2
+					docker run -itd --name bbox2 busybox
+					docker exec bbox2 ip r
+		flannel网络隔离
+			虽然分配了独立的subnet但是又把它们连起来了 可以相互路由
+			同时flannel将各主机上相互独立的docker0容器网络又连起来了 所以没有提供网络隔离
+		flannel外部网络连通性
+			通过默认的bridge dockre0 所以跟前面网络部分的bridge方式是一样的
+			通过docker0 的ip转换NAT访问外网
+			外网访问容器就通过端口映射
+		host-gw backend
+			跟vxlan不同 不进行数据包封装而是在多host的路由表中创建到其他主机的子网路由规则
+			首先对flannel-config.json进行配置
+				{xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx "host-gw"} 跟前面一样
+			etcdctl --endpoints=ip:2379 set /docker-test/network/config < flannel-config.json
+				也是前面一样键值对
+			进入host1
+				复制前面host1host2的命令启动flannel
+				systemctl xxx
+				systemctl xxd
+				成功的话也是一堆输出
+					flanneld发现已经分配了子网10.2.40.0/24 然后继续使用
+					从etcd数据库中发现host2的子网10.2.17.0/24 但由于类型为vxlan不兼容忽略掉
+					运行一阵子后再次发现host2的子网 但并没有忽略 因为host2重启了flanneld 然后继承了etcd的新配置
+					问题在这里因为ssh的问题没有实际跟教程操作 不知道host2是作者手动还是flannel自动重启的
+					ip r
+						发现成功增加了规则
+						10.2.17.0/24 via 192.16.56.105 dev 网卡id
+						从右开始看通过网卡转发数据 然后通过xxx网关路由到xxx
+			进入host2
+				同上
+				ip r
+				/run/flannel/subnet.env 查看发现mtu=1500跟vxlan不同
+				然后作者就去修改本机docker的参数然后重载重启 
+				问题来了 到底是本机host还是远程host的docker 不知道 可能要看前面vxlan的配置 或者只能手动尝试
+				host-gw把多host配置成网关并且本地host知道其他主机的子网和转发地址 而vxlan是直接建立虚拟通道并不需要那么多配置
+				但由于vxlan需要对数据进行额外的打包和拆包所以响应速度是要低于host-gw 类似于动态ip慢于静态ip
+				总结可见 这个方案要比consul麻烦太多 也可能是作者偏好没有讲清楚
+	weave
+		weaveworks开发的网络方案 创建的虚拟网络可以连接多host上的容器
+		相当于一个为容器定制的巨型以太网交换机 无需NAT与端口映射并且支持容器dns功能
+		weave不依赖分布式数据库比如etcd consul
+		分别进入host1host2
+			curl -L git.io/weave -o /usr/local/bin/weave chmod a+x /usr/local/bin/weave	
+				安装weave
+		进入host1
+			weave launch
+				weave会自动从dockerhub下载最新镜像并启动容器
+			docker ps
+				发现组件都是容器方式运行
+				weave
+					是主程序 负责weave网络 数据收发 dns服务
+				weaveplugin
+					是库网络的核心驱动CNM 用来实现docker网络
+				weaveproxy
+					就是个ip代理 直接把docker的网络给代理起来了
+					通过dockercli创建的容器会被自动代理到weave网络
+				docker network ls
+					发现多了个weave
+				docker netwrok inspect weave的id
+					发现子网范围是10.32.0.0/12
+			eval $(weave env) docker run --name bbox1 -tid busybox
+				作用是声明weave的环境变量 后续的docker命令会交给weave代理去处理
+				docker exec -ti bbox1 ip address
+					发现有两个虚拟网卡接口 具体看本机
+					一个是默认bridge 就是docker0 ip具体看本机 教程是10.2.40.2/24
+					第二个接口的id跟第一个很相似 会有一个编号
+					ip link
+						在这里找到编号对应的网卡信息
+						发现它的veth pair配对网卡endpoint挂在host1的linuxbridgeweave上
+						brctl show
+							找到weave的veth pair部分
+							发现还有一个vethwe-bridge
+							ip -d link
+								这里开始复杂 发现很多个虚拟网卡
+								-bridge与-datapath是veth pair 
+								datapath是-datapath与vxlan-xxx的master
+								多host通过vxlan通信
+								datapath是一个openvswitch负责在vxlan通道里收发数据
+								weave与datapath都是虚拟交换机一个负责搭桥一个负责收费
+			docker run --name bbox2 -itd busybox
+				docker exec bbox1 hostname
+				docker exec bbox1 ping -c 2 bbox2   ok
+		进入host2
+			weave launch host1ip
+				跟上面不一样 这里要指定host1的ip然后才会进入同一个weave网络 类似join
+			eval $(weave env) docker run --name bbox3 -itd busybox
+				跟上面一样声明环境变量 激活weave代理
+			docker exec bbox3 ping -c 2 bbox1
+			docker exec bbox3 ping -c 2 bbox2
+				这三个容器都是走同一个vxlan通道的 在逻辑上是同一个LAN 所以应该属于同一个子网 尽管其中一个容器子网不一样
+			docker exec bbox3 ip route
+				找到host2的网桥ip发现是发送到host1的网桥 通过dev后面的网卡发送出去
+	weave网络隔离
+		进入host1
+			docker run -e WEAVE_CIDR=net:新网关/24 -ti busybox
+				通过环境变量WEAVE_CIDR指定了一个24位的掩码 虽然网关一样但已经是一个不同的子网 从而实现了隔离
+				教程里是10.32.0.0/12与10.32.2.0/24 由于子网不同所以ping不通了
+				ip r
+					找到新子网那一行 起点就是容器ip
+			docker run -e WEAVE_CIDR=ip:新ip/24 -ti busybox
+				跟上面类似可以直接指定一个子网ip 由于网段不一样 所以也隔离
+	weave外部网络连通
+		默认是一个私有的vxlan网络所以是与外部隔离的
+		要实现连通首先将host加入到weave网络 然后将hostip设置成weave网络的网关 反正就是要成文weave网络的一部分
+		进入host1
+			weave expose
+				教程是103203/12
+			ip addr show weave
+				教程这里写的是这个ip加入到网桥 但上面写的是网关 暂且理解是网关
+				此时的weave网桥是位于host1的root namespace 它能够将容器加入到weave网络
+				只要给容器分配同一个子网网段那么就能通信了
+				ping -c 2 host1bbox1ip  ok
+				ping -c 2 host2bbox3ip  ok
+		本机host	
+			ip route add weave子网网关/12 via host1ip
+			ip route
+				找到host1ip那一行 
+			这个配置实现了外网到weave 反过来不需要配置因为容器本身能跟docker通信
+			而docker0是linuxbridge本身就实现了NAT 所以无需配置
+		IPAM
+			这个103200/12是weave默认分配的网段 如果发生了ip冲突可以手动改动
+			weave launch --ipalloc-range 10.2.0.0/16
+				比如改成这样 但所有host都要随之对应到这个网段 不然又连不上了
+	calico
+		纯三层的虚拟网络方案 为每个容器分配一个ip 每个host都是路由器 所有这些路由器都连通起来
+		跟vxlan不同的是calico不对数据作封装处理而且不需要NAT和端口映射 所以扩展性与性能都很好
+		还有一个优势network policy 用户可以动态定义ACL规则 控制进出容器的数据包从而满足更多的业务需求
+		calico依赖etcd存储网络状态 在本地host运行etcd 其他host要运行calico组件实现网卡管理动态路由动态ACL以及报告
+		本机host			
+			etcd -listen-client-urls http://本机ip:2379 -advertise-client-urls http://本机ip:2379
+		分别进入host1host2
+			/etc/systemd/system/docker.service
+				跟前面flanned方案一样修改配置信息
+				--cluster-store=etcd://本机host:2379
+					意思很清楚就是集群host的存储位置在本机host的etcd
+				systemctl
+				systemctl
+					重载重启
+		本机host	
+			下载calicoctl
+				具体看github命令
+		分别进入host1host2
+			calicoctl node run
+				启动calico会有一大堆输出
+					设置主机网络 enable ip forwarding
+					下载并启动calico-node容器 calico跟weave类似以容器形式运行
+					docker container ls
+						发现calico-node
+					连接etcd
+					启动calico成功
+			创建calico网络
+				可以在host1或host2因为会共享到整个集群
+				docker network create --driver calico --ipam-driver calico-ipam calnet1
+					指定网络驱动为calico的库网络核心CNM驱动
+					指定calico的ip管理驱动为ipam
+				docker network ls
+					calico是global网络 etcd会将集群host内的所有calnet同步到所有集群host 从而实现信息的共享
+			进入host1
+				docker container run --net calnet1 --name bbox1 -tid busybox
+				docker exec bbox1 ip address
+				ip route
+					跟前面的网络方案一样找网卡配对路由网关子网的对应id
+			进入host2
+				docker container run --net calnet1 --name bbox2 -tid busybox
+				docker exec bbox2 ip address show cali0
+					这个cali0就是上面host1里查看到的calico网卡 在host2内应该也能看到
+					calico的ip跟host1的不一样
+				ip route
+					发现host2添加了两个路由
+					一个是往host1容器的子网路由
+					一个是往本地bbox2的容器路由
+					此时切换到host1 ip route发现也自动添加了新的路由
+					教程并没有讲清楚动态添加路由的细节 猜测是calico的特性通过etcd共享多host的信息
+					所以可以将这些自动添加的路由理解成类似vxlan那样的虚拟通道 默认没有静态对应物而是动态添加的
+		calico连通性
+			进入host1	
+				docker exec bbox1 ping -c 2 bbox2  ok
+				docker exec bbox1 ip route
+					数据通过cali0发出	
+					教程没写命令 手动尝试其他ip命令查看路由表发现数据通过某个网卡发送到host2
+					host2收到数据然后发送到cali的某个veth的配对网卡然后发送到配对的cali0最后到bbox2
+			创建calnet2
+				由于是共享集群信息所以可以在host1或host2创建
+				docker  network create --driver calico --ipam-driver calico-ipam calnet2
+			进入host1
+				docker container run --net calnet2 --name bbox3 -tid busybox
+					docker exec bbox3 ip address show cali0
+						找到容器ip
+					docker exec bbox1 ping -c 容器ip
+						发现不通 虽然bbox1bbox3都在host1而且在同一个子网内
+						但它们属于不同的calico网络 默认是不通的 这个规则是容器只能与同一个calico网络的容器通信
+					calicoctl get profile calnet1 -o yaml
+						查看输出这是calico生成的calnet1的profile
+						tag calnet1跟name:calnet1没关系 但后面用到
+						egress对容器发出的数据包控制 当前通行
+						ingress对进入容器的数据包控制 当前只接收tag calnet1的容器数据
+						就是这个规则导致上面的奇怪现象并且这种规则是可以自定义的
+						所以calico跟其他网络方案的相比非常特别
+		calico规则定制
+			尝试定制规则
+			创建一个网络部署一个容器web1
+			然后定制规则允许calnet2的容器访问刚部署的web1的80端口
+			docker network create --driver calico --ipam-dirver calico-ipam calweb			
+				集群共享的 随笔找个host
+			进入host1
+				docker container run --net calweb2 --name web1 -d httpd
+				docker container exec web1 ip address show cali0
+					找到容器ip
+				docker container exec bbox3 wget 容器ip
+					bbox3ping不通web1 因为默认就是不通的
+				创建规则文件web.yml
+					这里有些格式要求 跟前面所有内容都不太一样
+					简单来讲就是创建出来的ipam管理器默认是没有配置的 要手动配置不然连不上
+					就跟ssh一样麻烦 但同时跟ssh一样强大
+					metadata
+						元数据名字为ipam管理器的名字
+					ingress
+						这里就是规则位置 允许calnet2网络访问 而bbox3是挂在这个网的
+						教程在这里搞错了 写成了calnet但同时前面也讲了其实是可以随便定tag名
+						所以手动测试一下 不知道是作者没搞清楚还是calico这么蛋疼
+					port 80
+					calicoctl apply -f web.yml
+						激活规则
+						docker container exec bbox3 wget 容器ip   ok
+						docker container exec bbox3 ping -c 2 容器ip  不ok
+							因为只开放了80端口所以ping不通
+							可见calico通过规则可以做到微粒级别控制
+							不但能实现更多业务需求同时也可以用来debug各种网络方案从而生成更多网络玩法
+		calico ipam
+			上面是默认的 这里是自定义
+			cat << EOF | calicoctl create -f - - apiVersion: v1 kind: ipPool metadata: cidr: 17.2.0.0/16 EOF
+				这是一个IP池 具体查calico文档
+			docker network create --driver calico --ipam-drier calico-ipam --subnet=17.2.0.0/16 mynet
+				上面的ip池命令已经将配置信息输入到ip管理器的文件里面去了  
+				指定驱动 ip管理器 子网 生成一个网络容器
+			进入host1
+				docker container run --net mynet -ti busybox
+					ip address show cali0
+						找到容器ip
+				docker container run --net mynet --ip 17.2.3.11 -ti busybox
+					ip address show cali0
+						找到容器ip 自定义的
+	以上几个方案的总结
+		vxlan
+			docker overlay   分布式存储
+			flannel vxlan	分布式存储
+			weave	非分布式
+		underlay
+			macvlan	非分布式
+			flannel host-gw  分布式存储
+			calico	分布式存储
+		ipam
+			docker overlay  单一子网   跨网要将容器入网 连外部用docker_gwbridge
+			macvlan 自定义  二层隔离 三层连通
+			flannel vxlan 每个host一个子网     默认连通  连外部用bridge
+			flannel host-gw 每个host一个子网   同上
+			weave 单一子网  默认连通  隔离通过分配不同的子网   连外部要将host集群加入到weave里当网关
+			calico 每个host一个子网   默认只允许同一网络的容器间通信 但有微粒级策略管理器
+	容器监控
+		docker container ls  docker 运行了什么
+		docker container top xxx  容器运行了什么  可以搭配其他命令比如-au
+		docker container stats 容器运行得如何
+		docker container stats 容器名 同上
+		sysdig
+			linux的监控工具并默认支持容器技术
+			其他的还有strace tcpdump htop iftop lsof
+			docker container run -ti --rm --name=sysdig --privileged=true \ 
+			--volume=/var/run/docker.socke:/host/var/run/docker.sock \
+			--volume=/dev:/host/dev \
+			--volume=/proc:/host/proc:ro \
+			--volume=/boot:/host/boot:ro \
+			--volume=/lib/modules:/host/lib/modules:ro \
+			--voleme=/usr:/host/usr:ro \ sysdig/sysdig
+			docker container exec -ti sysdig bash
+				csysdig
+					得到一个类似linux top的输出 但是功能强大很多
+		weavescope
+			似乎比上面这个更强大 因为省了不少配置而且有更直观的数据
+			curl -L git.io/scope -o /usr/local/bin/scope chmod a+x /usr/local/bin/scope
+			scope launch 
+				也是以容器方式启动
+				根据提示直接在浏览器输入集群host:4040 就可以看到该host的数据
+				weave容器有系统容器与应用容器 只看到应用
+				多host
+					scope launch Ahostip Bhostip
+						跟前面的集群共享一样随便访问一个host都能看到其他host
+						而且还支持搜索与各种条件判断比如cup个数
+		cadvisor
+			google开发的
+			docker run \ 
+			--volume=/:/rootfs:ro \
+			--volume=/var/run:/var/run:rw \
+			--publish=8080:8080 \
+			--detach=true \
+			--name=cadvisor \
+			google/cadvisor:latest
+			访问ip端口8080
+			似乎没有上面的牛逼但是可以导出数据而且支持很多第三方工具 所以既是收集工具也是加工接口
+		prometheus
+			promethues server从导出接口拉取并存储数据而且有配套查询命令
+			exporter 数据导出接口 可以通过http送到promethuesserver
+			grafana 可视化
+			alertmanager 警告管理
+			自带几个数据分析api比如avg sum by对监控数据进行二次分析从而满足各种内外业务需求与优化
+			监控两个host
+				将server以容器方式运行在其中一个host 与grafana一起
+				数据导出
+					节点导出
+						收集硬件与软件系统数据 在所有host		
+					cadvisor
+						容器数据导出 在所有host上
+				grafana
+					容器方式运行在其中一个host 与server一起
+			docker run -d -p 9100:9100 \ 
+			-v "/proc:/host/proc" \
+			-v "/sys:/host/sys" \
+			-v "/:/rootfs" \
+			--net=host \
+			prom/node-exporter \
+			-collector.procfs /host/proc \
+			-collector.sysfs /host/sys \
+			-collector.filesystem.ignored-mout-points "^/(sys|proc|dev|host|etc)($|/)"
+			--net=host的作用是可以直接与节点导出通信
+			访问浏览器ip端口9100/metrics
+			运行cadvisor
+			docker run \ --volume=/:/rootfs:ro \
+			--volume=/var/run:/var/run:rw \
+			--volume=/sys:/sys:ro \
+			--volume=/var/lib/docker/:/var/lib/docker:ro \
+			--publish=8080:8080 \
+			--detach=true \
+			--name=cadvisor \
+			--net=host \
+			google/cadvisor:latest
+			运行server
+			docker run -d -p 9090:9090 \
+			-v /root/prometheus.yml:/etc/promethues/prometheus.yml \
+			--name prometheus \
+			--net=host \
+			prom/promethues
+			这里的--net=host的作用是server可以与导出器跟分析器通信
+			promethues.yml配置
+			static_configs: -targets 这里指定抓取的数据源 localhost9090是server自身 所以也会自我分析	
+			访问ip端口9090的target找到up的就是正在监控
+			运行grafana
+			docker run -d -i -p 3000:3000 \
+			-e "GF_SERVER_ROOT_URL=http://grafana/server.name" \
+			-e "GF_SECURITY_ADMIN_PASSWORD=secret" \
+			--net=host \
+			grafana/grafana
+			这里的--net=host可以直接与server通信
+			PASSWORD指定了用户密码
+			访问ip端口3000 然后登陆账户密码
+			通过dashboard展示监控数据 而且社区已经搞出一大堆现成的dashboard
+		docker ps top stats 快速
+		sysdig有分析与挖掘 神器
+		cadvisor有依赖
+		weavescope 流畅简洁支持web
+		promethues 支持二次分析 广度深度都接近完美
+日志管理
+	由于容器短命出了问题没法进入内部 只能通过外部的log记录
+	docker logs
+		docker将日志发送到容器的标准输出设备stdout和标准错误stderr 
+		stdout stderr实际上就是容器的控制台终端
+		docker run -p 80:80 httpd
+			由于没有-d参数 所以容器在前台启动 日志就打印在前台的终端窗口
+			docker run -p 80:80 -d httpd
+				这时候就没有日志输出
+				docker attach 容器id 
+					这个命令就是用来看日志的 但不一定有日志 因为什么数据都没有
+					另起一个终端 
+					curl localhost
+						这时候attach的终端就有日志输出了
+						但是attach命令启动前的日志看不到 所以这个命令不常用
+						而且退出容器的命令快捷键也麻烦很容易按错然后退出容器
+				docker logs -f 容器id
+					效果与linux的tail -f一样 可以看到容器的完整输出
+	docker logging driver
+		跟stdout stderr一样获取日志的方法 不同的驱动有不同的获取方式
+		docker info | grep 'Logging Driver'
+			发现驱动为json-file 不指定的话默认就是这个驱动
+			格式化为json文件并输出到stdout stderr
+			/var/lib/docker/containers/xxxid/xxxid-json.log
+		docker支持多种logging driver 具体看官方文档
+		none 禁用容器日志功能
+		syslog journald是linux的两种日志
+		awslogs splunk gcplogs是第三方日志托管
+		gelf fluentd是两种开源日志方案
+		--log-driver是启动指定参数
+		修改docker daemon配置
+			execstart=/usr/bin/dockerd -H fd:// --log-driver=syslog --log-opt 
+				找到这一行可以改动默认的logging driver 比如改为syslog
+	elk
+		最出名的日志方案
+		分别是elasticsearch + logstash + kibana
+		e是全文搜索引擎处理海量日志
+		l过滤原始日志并发送到e 有丰富的接口可以过滤出各种日志来源
+		k基于js的web图形界面 专门用于e的可视化dashboard
+		docker run -p 5601:5601 -p 9200:9200 -p 5044:5044 -ti --name elk sebp/elk
+			这里已经包含了整个elk工作栈 
+			这里一共是三套组件 所以映射了3个端口
+			5601 k web接口
+			9200 e json接口
+			5044 l 接收接口
+			访问k 浏览器hostip端口5601
+			e没有数据所以k暂时没有数据
+			访问e hostip端口9200/_search?pretty
+		filebeat
+			elk的数据导入插件要安装
+			将容器的log导入到elk 日志更新时也会导入到elk
+			curl -L -O https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-5.4.0-amd64.deb dpkg -i filebeat-5.4.0-amd64.deb
+				具体看网页
+				/etc/filebeat/filebeat.yml
+					/var/lib/docker.containers/*/*.log 所有容器日志
+					/var/log/syslog 是host操作系统的syslog
+			可以直接e存储 也可以l进行过滤再存储
+			教程选择直接发送到e 然后看到一堆注释的配置
+			改动配置文件output.elasticsearch: host: ["localhost:9200"] 但没有看到具体这个配置文件在哪里 需要手动测试下
+			systemctl start filebeat.service 安装的时候注册了systemd/
+				启动后正常的话日志发送到e 刷新e的json 在浏览器刷新hostip端口9200/_search?pretty
+		kibana
+			访问 index pattern指定为e中的index
+			time-field name选择@timestamp
+			然后点创建 选择左边discover可以看到容器与syslog的日志
+		docker run busybox sh -c 'while true; do echo "yooo"; sleep 10; done;'
+			刷新kibana
+		fluentd
+			开源收集驱动 有数百种插件 花样多意味着什么数据都能搞到
+			docker run -d -p 24224:24224 -p 24224:24224/udp -v /data:/fluentd/log fluent/fluentd
+				似乎是个镜像 tcp upd的端口映射 路径映射到host的/data文件夹
+			切换到filebeat
+				/etc/filebeat/filebeat.yml 
+					paths位置修改 /data/*.log  这个是提取路径 这样data文件夹的log就发送到filebeat
+			重启filebeat
+			docker run -d \
+			--log-driver=fluentd \
+			--log-opt fluentd-address=localhost:24224 \
+			--log-opt tag="log-test-container-A" \
+			busybox sh -c 'while true;do echo “yoo A”; sleep 10; done;'
+			docker run -d \
+			--log-driver=fluentd \
+			--log-opt fluentd-address-localhost:24224 \
+			--log-opt tag="log-test-container-B" \
+			busybox sh -c 'while true; do echo "yoo B"; sleep 10; done;'
+				指定收集驱动用fluentd
+				--log-opt fluentd-address发送到ip端口
+				--log-opt tag 区分不同容器的日志
+			刷新kibana
+	graylog
+		提供web接口访问
+		e保存日志
+		mongodb负责保存g的配置
+		它并不是一个完整的工作栈 需要自己组建
+		但是通过这些命令可以明白工作栈怎么构建
+		docker run --name graylog-mongo -d mongo:3
+		docker run --name graylog-elasticsearch -d elasticsearch:2 elasticsearch -Des.cluster.name="graylog"
+		docker run --link graylog-mongo:mongo \
+		--link graylog-elasticsearch:elasticsearch \
+		-p 9000:9000 \
+		-p 12201:12201/upd \
+		-e GRAYLOG_WEB_ENDPOINT_URI="http://192.168.56.101:9000/api" \
+		-e GRAYLOG_PASSWORD_SECRET=somepasswordpepper \
+		-e GRAYLOG_ROOT_PASSWORD_SHA2=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+		-d graylog2/server
+			--link让g容器能够用mongo这个host配合e来访问mongodb以及e服务
+			-p 9000 是g的端口
+			-p 12201是g接收数据的udp端口
+			endpointurl是g的访问ip 在教程测试这里用的就是本机的已联网ip 因为这些组件是互联网都可以访问的 
+			passwordsha2 是g的管理员密码哈希 需要自己指定密码并为这个密码生成哈希 
+				echo -n 自定义密码 | shasum -a 256
+					这样就生成了密码与哈希然后指定到g的启动参数里去 
+		访问g的webip端口9000
+			这里似乎有问题 账号名没有指定 但教程是admin
+		然后就是启动容器发送日志 跟上面fluentd一样
+数据管理
+	容器分为需要持久化与无需持久化
+	比如nginx与mysql
+	比如machine的两个host 一个运行mysql 所以要映射一个datavolume来存储数据
+	当mysql的host1故障了 那么在host2继续运行mysql 并继续映射volume存储数据
+	docker通过volume driver来实现这个跨主机的volume映射
+	但这个volume只是众多driver中的一个 可以手动指定其他第三方driver
+	教程这里并没有太多具体底层实现细节 然后选了个rex-ray 原因是开源 
+	配置的东西太多 暂时略过
+docker swarm
+	教程没有这部分内容
+	似乎比machine好用 首先就没有看到ssh的门槛 直接就用了个token
+	但要自己在远程host上安装docker 如果有类似于ubuntu-docker这样的镜像
+	那么就可以直接部署了
 
 
