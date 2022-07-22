@@ -17,13 +17,24 @@
 	git commit -m "墓志铭"
 	git log 显示你干什么了
 仓库出货
-	git push
+	git push -u origin main
+		最后的main是自定义的 如果不存在就会变成分支
+		在其他环境测试代码的时候想push 发现爆出一大堆红字
+		改了分支名之后是没有问题的 如果想放回去这个main就需要合并
+	git pull origin main
+		在其他环境下push爆红字 先拉取目标分支下来 然后就正常了
+	git remote add origin git@github.com:用户名/仓库名(不是分支名).git
+		如果还是不行就试试这个
 	输入相关账号密码 2021年出了新玩法 密码认证有时限 估计是linux的大仓库太多垃圾 搞事情了
 仓库规范化
 	git init 生成.git目录记录相关工作记录
 	git status 
 	git log --pretty=short
 	git log filename
+下载东西
+	其实这个是linux系统 不过反正都是他搞的
+	curl -o xxx.html
+	curl -O xxx.xxx 这个才是下载
 待续 以后用到再补充
 
 
