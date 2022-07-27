@@ -1,3 +1,9 @@
+env
+	用了docker之后发现有很多配置问题 经过一晚上测试发现是golang的问题
+	因估计是因为docker k8s之类的云平台将linux与google进行了分流
+	尤其是分流了google 据说go的开发人员离职了 估计是当了背锅的
+	go官方镜像 第三方go centos里安装的go ubuntu安装的go windows安装的go
+	测试结果就是只有第三方封装旧版go的用起来是正常 其他全部都是很恶心的
 runtime
 	看了几本go书发现同一个函数有一大堆写法 但是配套的包却是基本固定的
 	也就是说随机将某种函数写法与包组合起来的话 大概率是会出错的
@@ -13,3 +19,10 @@ runtime
 pipeline
 	go1里面同一个代码两种写法 但是outin写法的in看了半天发现是流水线
 	也就是说不管有多少个out多少个stage其实都只是一条线而且有存储问题
+并发
+	直接看程序设计8.5 chan跟sync基本一次性打包讲清楚了 翻译得不怎么样
+	书里找用法找不到 个别系统镜像curl有认证问题 最后发现代码注释有写
+	ls -l filename 
+	go run xxx -> 输入文件名 然后ctrl c退出
+	ls -l filename 发现文件的确缩小了很多倍 
+	git上面排第一那个gopl的代码跟书本有些差别 但似乎好用很多
